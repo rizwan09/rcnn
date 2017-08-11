@@ -122,6 +122,7 @@ class Layer(object):
         self.W = create_shared(W_vals, name="W")
         if self.has_bias: self.b = create_shared(b_vals, name="b")
 
+    
     def forward(self, x):
         if self.has_bias:
             return self.activation(
@@ -131,6 +132,36 @@ class Layer(object):
             return self.activation(
                     T.dot(x, self.W)
                 )
+
+    def predict(self, x, z_tm1):
+        print "z_tm1", z_tm1.ndim, type(z_tm1)
+        #print "prob_tm1", z_tm1.ndim, type(prob_tm1)
+        #print "err_tm1", z_tm1.ndim, type(err_tm1)
+        #print "loss_tm1", z_tm1.ndim, type(loss_tm1)
+
+        if self.has_bias:
+            prob = self.activation(
+                    T.dot(x, self.W) + self.b
+                )
+        else:
+            prob =  self.activation(
+                    T.dot(x, self.W)
+                )
+        z_t  = T.argmax(prob, axis=1)
+        return z_t
+
+    def forward_all(self, x):
+        z0 = T.zeros((x.shape[1],), dtype='int64')
+
+        (z , updates) = theano.scan(
+                            fn = self.predict,
+                            sequences = [ x ],
+                            outputs_info = [ z0 ]
+                    )
+        assert z.ndim == 2
+        return z, updates
+
+
 
     @property
     def params(self):
