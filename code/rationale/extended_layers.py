@@ -10,6 +10,7 @@ from nn import create_shared, random_init
 class ExtRCNN(RCNN):
 
     def forward(self, x_t, mask_t, hc_tm1):
+        #x_t = mask_t * x_t 
         hc_t = super(ExtRCNN, self).forward(x_t, hc_tm1)
         hc_t = mask_t * hc_t + (1-mask_t) * hc_tm1
         return hc_t
@@ -65,19 +66,25 @@ class ExtLSTM(LSTM):
         self.internal_layers = from_obj.internal_layers
 
 class ZLayer(object):
-    def __init__(self, n_in, n_hidden, activation):
+    def __init__(self, n_in, n_hidden, activation, seed = None):
         self.n_in, self.n_hidden, self.activation = \
                 n_in, n_hidden, activation
-        self.MRG_rng = MRG_RandomStreams()
+        if seed is not None: self.MRG_rng = MRG_RandomStreams(seed)
+        else: self.MRG_rng = MRG_RandomStreams()
+        self.seed = seed
         self.create_parameters()
+        
 
     def create_parameters(self):
         n_in, n_hidden = self.n_in, self.n_hidden
         activation = self.activation
+        seed = self.seed 
 
-        self.w1 = create_shared(random_init((n_in,)), name="w1")
-        self.w2 = create_shared(random_init((n_hidden,)), name="w2")
-        bias_val = random_init((1,))[0]
+        print 'in create parameters'
+
+        self.w1 = create_shared(random_init((n_in, ), seed=seed), name="w1")
+        self.w2 = create_shared(random_init((n_hidden, ), seed=seed), name="w2")
+        bias_val = random_init((1, ), seed=seed)[0]
         self.bias = theano.shared(np.cast[theano.config.floatX](bias_val))
         rlayer = RCNN((n_in+1), n_hidden, activation=activation, order=2)
         self.rlayer = rlayer
