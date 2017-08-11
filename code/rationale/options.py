@@ -49,6 +49,11 @@ def load_arguments():
             default = 100,
             help = "maximum # of epochs"
         )
+    argparser.add_argument("--save_every",
+            type = int,
+            default = 5,
+            help = "save models after each #epochs"
+        )
     argparser.add_argument("--eval_period",
             type = int,
             default = -1,
@@ -152,5 +157,24 @@ def load_arguments():
             type = int,
             default = 1
         )
+    argparser.add_argument("--trained_max_epochs",
+            type = int,
+            default = 50
+        )
+
+    argparser.add_argument("--graph_data_path",
+            type = str,
+            default = 'graph_data/data_vs_lamda_table.txt'
+        )
+    argparser.add_argument('--seed', type=int, default=1111,
+                        help='random seed for reproducibility')
+
+    argparser.add_argument('--debug', type=float, default=0,
+                        help='small train set to debug')
+    argparser.add_argument('--select_all', type=int, default=-1,
+                        help='percentage of selection or -1')
+    argparser.add_argument('--cur_epoch', type=int, default=-1,
+                        help='epoch no of the trained model')
+
     args = argparser.parse_args()
     return args
