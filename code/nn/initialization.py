@@ -56,7 +56,9 @@ def set_default_rng_seed(seed):
     global default_rng, default_srng
     random.seed(seed)
     default_rng = np.random.RandomState(random.randint(0,9999))
-    default_srng = T.shared_randomstreams.RandomStreams(default_rng.randint(9999))
+    #default_srng = T.shared_randomstreams.RandomStreams(default_rng.randint(9999))
+    default_mrng = MRG_RandomStreams(default_rng.randint(9999))
+    default_srng = default_mrng
 
 
 '''
@@ -72,7 +74,8 @@ def set_default_rng_seed(seed):
                             normal  -- Normal distribution with unit variance and zero mean
                             uniform -- uniform distribution with unit variance and zero mean
 '''
-def random_init(size, rng=None, rng_type=None):
+def random_init(size, rng=None, rng_type=None, seed=None):
+
     if rng is None: rng = default_rng
     if rng_type is None:
         #vals = rng.standard_normal(size)
