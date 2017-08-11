@@ -1,102 +1,172 @@
-'''
-    This file implements various methods for initializing NN parameters
-
-    @author: Tao Lei (taolei@csail.mit.edu)
-'''
-
-import random
-
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 
-'''
-    whether to use Xavier initialization, as described in
-        http://jmlr.org/proceedings/papers/v9/glorot10a/glorot10a.pdf
-'''
-USE_XAVIER_INIT = False
+from nn import create_optimization_updates, get_activation_by_name, sigmoid, linear
+from nn import EmbeddingLayer, Layer, RecurrentLayer, LSTM, RCNN, apply_dropout, default_rng
+from nn import create_shared, random_init
 
+class ExtRCNN(RCNN):
 
-'''
-    Defaut random generators
-'''
-#random.seed(5817)
-default_rng = np.random.RandomState(random.randint(0,9999))
-#default_srng = T.shared_randomstreams.RandomStreams(default_rng.randint(9999))
-default_mrng = MRG_RandomStreams(default_rng.randint(9999))
-default_srng = default_mrng
+    def forward(self, x_t, mask_t, hc_tm1):
+        #x_t = mask_t * x_t 
+        hc_t = super(ExtRCNN, self).forward(x_t, hc_tm1)
+        hc_t = mask_t * hc_t + (1-mask_t) * hc_tm1
+        return hc_t
 
-'''
-    Activation functions
-'''
-ReLU = lambda x: x * (x > 0)
-sigmoid = T.nnet.sigmoid
-tanh = T.tanh
-softmax = T.nnet.softmax
-linear = lambda x: x
+    def forward_all(self, x, mask, h0=None, return_c=False):
+        if h0 is None:
+            if x.ndim > 1:
+                h0 = T.zeros((x.shape[1], self.n_out*(self.order+1)), dtype=theano.config.floatX)
+            else:
+                h0 = T.zeros((self.n_out*(self.order+1),), dtype=theano.config.floatX)
+        h, _ = theano.scan(
+                    fn = self.forward,
+                    sequences = [ x, mask ],
+                    outputs_info = [ h0 ]
+                )
+        if return_c:
+            return h
+        elif x.ndim > 1:
+            return h[:,:,self.n_out*self.order:]
+        else:
+            return h[:,self.n_out*self.order:]
 
-def get_activation_by_name(name):
-    if name.lower() == "relu":
-        return ReLU
-    elif name.lower() == "sigmoid":
-        return sigmoid
-    elif name.lower() == "tanh":
-        return tanh
-    elif name.lower() == "softmax":
-        return softmax
-    elif name.lower() == "none" or name.lower() == "linear":
-        return linear
-    else:
-        raise Exception(
-            "unknown activation type: {}".format(name)
-          )
+    def copy_params(self, from_obj):
+        self.internal_layers = from_obj.internal_layers
+        self.bias = from_obj.bias
 
-def set_default_rng_seed(seed):
-    global default_rng, default_srng
-    random.seed(seed)
-    default_rng = np.random.RandomState(random.randint(0,9999))
-    default_srng = T.shared_randomstreams.RandomStreams(default_rng.randint(9999))
+class ExtLSTM(LSTM):
 
+    def forward(self, x_t, mask_t, hc_tm1):
+        hc_t = super(LSTM, self).forward(x_t, hc_tm1)
+        hc_t = mask_t * hc_t + (1-mask_t) * hc_tm1
+        return hc_t
 
-'''
-    Return initial parameter values of the specified size
+    def forward_all(self, x, mask, h0=None, return_c=False):
+        if h0 is None:
+            if x.ndim > 1:
+                h0 = T.zeros((x.shape[1], self.n_out*(self.order+1)), dtype=theano.config.floatX)
+            else:
+                h0 = T.zeros((self.n_out*(self.order+1),), dtype=theano.config.floatX)
+        h, _ = theano.scan(
+                    fn = self.forward,
+                    sequences = [ x, mask ],
+                    outputs_info = [ h0 ]
+                )
+        if return_c:
+            return h
+        elif x.ndim > 1:
+            return h[:,:,self.n_out*self.order:]
+        else:
+            return h[:,self.n_out*self.order:]
 
-    Inputs
-    ------
+    def copy_params(self, from_obj):
+        self.internal_layers = from_obj.internal_layers
 
-        size            : size of the parameter, e.g. (100, 200) and (100,)
-        rng             : random generator; the default is used if None
-        rng_type        : the way to initialize the values
-                            None    -- (default) uniform [-0.05, 0.05]
-                            normal  -- Normal distribution with unit variance and zero mean
-                            uniform -- uniform distribution with unit variance and zero mean
-'''
-def random_init(size, rng=None, rng_type=None):
-    if rng is None: rng = default_rng
-    if rng_type is None:
-        #vals = rng.standard_normal(size)
-        vals = rng.uniform(low=-0.05, high=0.05, size=size)
+class ZLayer(object):
+    def __init__(self, n_in, n_hidden, activation, seed = None):
+        self.n_in, self.n_hidden, self.activation = \
+                n_in, n_hidden, activation
+        if seed is not None: self.MRG_rng = MRG_RandomStreams(seed)
+        else: self.MRG_rng = MRG_RandomStreams()
+        self.seed = seed
+        self.create_parameters()
+        
 
-    elif rng_type == "normal":
-        vals = rng.standard_normal(size)
+    def create_parameters(self):
+        n_in, n_hidden = self.n_in, self.n_hidden
+        activation = self.activation
+        seed = self.seed 
 
-    elif rng_type == "uniform":
-        vals = rng.uniform(low=-3.0**0.5, high=3.0**0.5, size=size)
+        print 'in create parameters'
 
-    else:
-        raise Exception(
-            "unknown random inittype: {}".format(rng_type)
-          )
+        self.w1 = create_shared(random_init((n_in, ), seed=seed), name="w1")
+        self.w2 = create_shared(random_init((n_hidden, ), seed=seed), name="w2")
+        bias_val = random_init((1, ), seed=seed)[0]
+        self.bias = theano.shared(np.cast[theano.config.floatX](bias_val))
+        rlayer = RCNN((n_in+1), n_hidden, activation=activation, order=2)
+        self.rlayer = rlayer
+        self.layers = [ rlayer ]
 
-    return vals.astype(theano.config.floatX)
+    def forward(self, x_t, z_t, h_tm1, pz_tm1):
 
+        print "z_t", z_t.ndim
 
-'''
-    return a theano shared variable with initial values as vals
-'''
-def create_shared(vals, name=None):
-    return theano.shared(vals, name=name)
+        pz_t = sigmoid(
+                    T.dot(x_t, self.w1) +
+                    T.dot(h_tm1[:,-self.n_hidden:], self.w2) +
+                    self.bias
+                )
 
+        xz_t =  T.concatenate([x_t, z_t.reshape((-1,1))], axis=1)
+        h_t = self.rlayer.forward(xz_t, h_tm1)
 
+        # batch
+        return h_t, pz_t
+
+    def forward_all(self, x, z):
+        assert x.ndim == 3
+        assert z.ndim == 2
+        xz = T.concatenate([x, z.dimshuffle((0,1,"x"))], axis=2)
+        h0 = T.zeros((1, x.shape[1], self.n_hidden), dtype=theano.config.floatX)
+        h = self.rlayer.forward_all(xz)
+        h_prev = T.concatenate([h0, h[:-1]], axis=0)
+        assert h.ndim == 3
+        assert h_prev.ndim == 3
+        pz = sigmoid(
+                T.dot(x, self.w1) +
+                T.dot(h_prev, self.w2) +
+                self.bias
+            )
+        assert pz.ndim == 2
+        return pz
+
+    def sample(self, x_t, z_tm1, h_tm1):
+
+        print "z_tm1", z_tm1.ndim, type(z_tm1)
+
+        pz_t = sigmoid(
+                    T.dot(x_t, self.w1) +
+                    T.dot(h_tm1[:,-self.n_hidden:], self.w2) +
+                    self.bias
+                )
+
+        # batch
+        pz_t = pz_t.ravel()
+        z_t = T.cast(self.MRG_rng.binomial(size=pz_t.shape,
+                                        p=pz_t), theano.config.floatX)
+
+        xz_t = T.concatenate([x_t, z_t.reshape((-1,1))], axis=1)
+        h_t = self.rlayer.forward(xz_t, h_tm1)
+
+        return z_t, h_t
+
+    def sample_all(self, x):
+        h0 = T.zeros((x.shape[1], self.n_hidden*(self.rlayer.order+1)), dtype=theano.config.floatX)
+        z0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
+        ([ z, h ], updates) = theano.scan(
+                            fn = self.sample,
+                            sequences = [ x ],
+                            outputs_info = [ z0, h0 ]
+                    )
+        assert z.ndim == 2
+        return z, updates
+
+    @property
+    def params(self):
+        return [ x for layer in self.layers for x in layer.params ] + \
+               [ self.w1, self.w2, self.bias ]
+
+    @params.setter
+    def params(self, param_list):
+        start = 0
+        for layer in self.layers:
+            end = start + len(layer.params)
+            layer.params = param_list[start:end]
+            start = end
+        self.w1.set_value(param_list[-3].get_value())
+        self.w2.set_value(param_list[-2].get_value())
+        self.bias.set_value(param_list[-1].get_value())
 
