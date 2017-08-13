@@ -3,7 +3,7 @@ import theano
 import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 
-from nn import create_optimization_updates, get_activation_by_name, sigmoid, linear
+from nn import create_optimization_updates, get_activation_by_name, sigmoid, softmax, linear
 from nn import EmbeddingLayer, Layer, RecurrentLayer, LSTM, RCNN, apply_dropout, default_rng
 from nn import create_shared, random_init
 
@@ -169,4 +169,69 @@ class ZLayer(object):
         self.w1.set_value(param_list[-3].get_value())
         self.w2.set_value(param_list[-2].get_value())
         self.bias.set_value(param_list[-1].get_value())
+
+class LZLayer(object):
+    def __init__(self, n_in, n_hidden, activation, seed = None):
+        self.n_in, self.n_hidden, self.activation = \
+                n_in, n_hidden, activation
+        if seed is not None: self.MRG_rng = MRG_RandomStreams(seed)
+        else: self.MRG_rng = MRG_RandomStreams()
+        self.seed = seed
+        self.create_parameters()
+        
+
+    def create_parameters(self):
+        n_in, n_hidden = self.n_in, self.n_hidden
+        activation = self.activation
+        seed = self.seed 
+
+        print 'in create parameters'
+        self.w_s = create_shared(random_init((n_in, 2), seed=seed), name="w1")
+        bias_val_s = random_init((2, ), seed=seed)[0]
+        self.bias_s = theano.shared(np.cast[theano.config.floatX](bias_val_s))
+        self.layers = [ ]
+
+    def sample(self, x_t, z_tm1, pz_tm1):
+
+        print "z_tm1", z_tm1.ndim, type(z_tm1)
+        print "pz_tm1", pz_tm1.ndim, type(pz_tm1)
+        pz_t = softmax(
+                    T.dot(x_t, self.w_s) +
+                    self.bias_s
+                )
+        # batch
+        pz_t = pz_t[:,1] #only consider probability for 1
+        print "pz_t", pz_t.ndim, type(pz_t)
+        pz_tm2 = pz_t
+        pz_t = pz_t.ravel()
+        z_t = T.cast(self.MRG_rng.binomial(size=pz_t.shape,
+                                        p=pz_t), theano.config.floatX)
+
+        return z_t, pz_tm2
+
+    def sample_all(self, x):
+        z0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
+        p0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
+        ([ z, p ], updates) = theano.scan(
+                            fn = self.sample,
+                            sequences = [ x ],
+                            outputs_info = [ z0, p0 ]
+                    )
+        assert z.ndim == 2
+        return z, p, updates
+
+    @property
+    def params(self):
+        return [ x for layer in self.layers for x in layer.params ] + \
+               [ self.w_s, self.bias_s ]
+
+    @params.setter
+    def params(self, param_list):
+        start = 0
+        for layer in self.layers:
+            end = start + len(layer.params)
+            layer.params = param_list[start:end]
+            start = end
+        self.w_s.set_value(param_list[-2].get_value())
+        self.bias_s.set_value(param_list[-1].get_value())
 
