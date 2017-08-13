@@ -75,23 +75,18 @@ class Generator(object):
         embs = apply_dropout(embs, dropout)
         self.word_embs = embs
 
-        flipped_embs = embs[::-1]
-
-        # len*bacth*n_d
-        
-        h_final = embs
         layers = self.layers = [ ]
         size = n_e
 
         output_layer = self.output_layer = LZLayer(
                 n_in = size,
-                n_hidden = args.hidden_dimension2,
+                n_genclassess = args.n_genclassess,
                 activation = activation,
                 seed = args.seed
             )
 
         # sample z given text (i.e. x)
-        z_pred, probs, sample_updates = output_layer.sample_all(h_final)
+        z_pred, probs, sample_updates = output_layer.sample_all(embs)
 
         # we are computing approximated gradient by sampling z;
         # so should mark sampled z not part of the gradient propagation path
