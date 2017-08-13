@@ -171,9 +171,9 @@ class ZLayer(object):
         self.bias.set_value(param_list[-1].get_value())
 
 class LZLayer(object):
-    def __init__(self, n_in, n_hidden, activation, seed = None):
-        self.n_in, self.n_hidden, self.activation = \
-                n_in, n_hidden, activation
+    def __init__(self, n_in, n_genclassess, activation, seed = None):
+        self.n_in, self.n_genclassess, self.activation = \
+                n_in, n_genclassess, activation
         if seed is not None: self.MRG_rng = MRG_RandomStreams(seed)
         else: self.MRG_rng = MRG_RandomStreams()
         self.seed = seed
@@ -181,15 +181,31 @@ class LZLayer(object):
         
 
     def create_parameters(self):
-        n_in, n_hidden = self.n_in, self.n_hidden
+        n_in, n_genclassess = self.n_in, self.n_genclassess
         activation = self.activation
         seed = self.seed 
 
         print 'in create parameters'
-        self.w_s = create_shared(random_init((n_in, 2), seed=seed), name="w1")
-        bias_val_s = random_init((2, ), seed=seed)[0]
+        self.w_s = create_shared(random_init((n_in, n_genclassess), seed=seed), name="w1")
+        bias_val_s = random_init((n_genclassess, ), seed=seed)[0]
         self.bias_s = theano.shared(np.cast[theano.config.floatX](bias_val_s))
         self.layers = [ ]
+
+    
+    def sample2(self, x_t, z_tm1, pz_tm1):
+
+        print "z_tm1", z_tm1.ndim, type(z_tm1)
+        print "pz_tm1", pz_tm1.ndim, type(pz_tm1)
+        pz_t = softmax(
+                    T.dot(x_t, self.w_s) +
+                    self.bias_s
+                )
+        
+        print "pz_t", pz_t.ndim, type(pz_t)
+        pz_tm2 = T.max(pz_t, axis=1)
+        z_t = T.cast(T.argmax(pz_t, axis=1), theano.config.floatX)#T.cast(self.MRG_rng.binomial(size=pz_t.shape, p=pz_t), theano.config.floatX)
+
+        return z_t, pz_tm2
 
     def sample(self, x_t, z_tm1, pz_tm1):
 
