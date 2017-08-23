@@ -5,11 +5,13 @@ import math
 import json
 import cPickle as pickle
 
+from theano.sandbox.rng_mrg import MRG_RandomStreams
+
 import numpy as np
 import theano
 import theano.tensor as T
 
-from nn import create_optimization_updates, get_activation_by_name, sigmoid, linear, softmax
+from nn import create_optimization_updates, get_activation_by_name, sigmoid, linear
 from nn import EmbeddingLayer, Layer, LSTM, RCNN, apply_dropout, default_rng, set_default_rng_seed
 from utils import say
 import myio
@@ -42,7 +44,7 @@ class Generator(object):
     def __init__(self, args, embedding_layer, nclasses):
         self.args = args
         self.embedding_layer = embedding_layer
-        self.nclasses = nclasses #aspects
+        self.nclasses = nclasses
 
 
     def ready(self):
@@ -64,9 +66,27 @@ class Generator(object):
         n_e = embedding_layer.n_d
         activation = get_activation_by_name(args.activation)
 
-        
+        layers = self.layers = [ ]
+        layer_type = args.layer.lower()
+        for i in xrange(2):
+            if layer_type == "rcnn":
+                l = RCNN(
+                        n_in = n_e,
+                        n_out = n_d,
+                        activation = activation,
+                        order = args.order
+                    )
+            elif layer_type == "lstm":
+                l = LSTM(
+                        n_in = n_e,
+                        n_out = n_d,
+                        activation = activation
+                    )
+            layers.append(l)
+
         # len * batch
-        masks = T.cast(T.neq(x, padding_id), theano.config.floatX)
+        #masks = T.cast(T.neq(x, padding_id), theano.config.floatX)
+        masks = T.cast(T.neq(x, padding_id), theano.config.floatX ).dimshuffle((0,1,"x"))
 
         # (len*batch)*n_e
         embs = embedding_layer.forward(x.ravel())
@@ -75,30 +95,40 @@ class Generator(object):
         embs = apply_dropout(embs, dropout)
         self.word_embs = embs
 
-        layers = self.layers = [ ]
-        size = n_e
+        flipped_embs = embs[::-1]
 
-        output_layer = self.output_layer = LZLayer(
+        # len*bacth*n_d
+        h1 = layers[0].forward_all(embs)
+        h2 = layers[1].forward_all(flipped_embs)
+        h_final = T.concatenate([h1, h2[::-1]], axis=2)
+        h_final = apply_dropout(h_final, dropout)
+        size = n_d * 2
+
+
+        output_layer = self.output_layer = Layer(
                 n_in = size,
-                n_genclassess = args.n_genclassess,
-                activation = activation,
-                seed = args.seed
+                n_out = 1,
+                activation = sigmoid
             )
 
-        # sample z given text (i.e. x)
-        z_pred, probs, sample_updates = output_layer.sample_all(embs)
+        # len*batch*1 
+        probs = output_layer.forward(h_final)
+
+        # len*batch
+        probs2 = probs.reshape(x.shape)
+        if self.args.seed is not None: self.MRG_rng = MRG_RandomStreams(self.args.seed)
+        else: self.MRG_rng = MRG_RandomStreams()
+        z_pred = self.z_pred = T.cast(self.MRG_rng.binomial(size=probs2.shape, p=probs2), theano.config.floatX) #"int8")
 
         # we are computing approximated gradient by sampling z;
         # so should mark sampled z not part of the gradient propagation path
         #
         z_pred = self.z_pred = theano.gradient.disconnected_grad(z_pred)
-        self.sample_updates = sample_updates
+        #self.sample_updates = sample_updates
         print "z_pred", z_pred.ndim
 
-        #probs = output_layer.forward_all(h_final, z_pred)
-        print "probs", probs.ndim
-
-        logpz = - T.nnet.binary_crossentropy(probs, z_pred) * masks
+        z2 = z_pred.dimshuffle((0,1,"x"))
+        logpz = - T.nnet.binary_crossentropy(probs, z2) * masks
         logpz = self.logpz = logpz.reshape(x.shape)
         probs = self.probs = probs.reshape(x.shape)
 
@@ -125,7 +155,6 @@ class Generator(object):
         self.l2_cost = l2_cost
         #say("finish generating : {}\n".format(time.time()-start_generate_time))
         #total_generate_time += time.time()-start_generate_time
-
 
 class Encoder(object):
 
@@ -283,6 +312,7 @@ class Model(object):
         self.x = self.generator.x
         self.y = self.encoder.y
         self.z = self.generator.z_pred
+        self.word_embs= self.generator.word_embs
         self.params = self.encoder.params + self.generator.params
 
         #assert len(self.x) == len(self.z)
@@ -323,7 +353,7 @@ class Model(object):
             eparams, gparams, nclasses, args  = pickle.load(fin)
 
         # construct model/network using saved configuration
-        self.args = args
+        #self.args = args
         #print self.args.select_all
         if seed is not None: self.args.seed = seed
         if select_all is not None: self.args.select_all = select_all
@@ -390,38 +420,38 @@ class Model(object):
         sample_generator = theano.function(
                 inputs = [ self.x ],
                 outputs = self.z,
-                updates = self.generator.sample_updates
+                #updates = self.generator.sample_updates
             )
 
         get_loss_and_pred = theano.function(
                 inputs = [ self.x, self.y ],
                 outputs = [ self.encoder.loss_vec, self.encoder.preds, self.z ],
-                updates = self.generator.sample_updates
+                #updates = self.generator.sample_updates
             )
 
         eval_generator = theano.function(
                 inputs = [ self.x, self.y ],
                 outputs = [ self.z, self.encoder.obj, self.encoder.loss,
                                 self.encoder.pred_diff ],
-                updates = self.generator.sample_updates
+                #updates = self.generator.sample_updates
             )
         sample_generator = theano.function(
                 inputs = [ self.x ],
                 outputs = self.z,
-                updates = self.generator.sample_updates
+                #updates = self.generator.sample_updates
             )
         sample_encoder = theano.function(
                 inputs = [ self.x, self.y, self.z],
                 outputs = [ self.encoder.obj, self.encoder.loss,
                                 self.encoder.pred_diff],
-                updates = self.generator.sample_updates
+                #updates = self.generator.sample_updates
             )
 
         train_generator = theano.function(
                 inputs = [ self.x, self.y ],
                 outputs = [ self.encoder.obj, self.encoder.loss, \
-                                self.encoder.sparsity_cost, self.z, self.generator.probs, gnorm_e, gnorm_g ],
-                updates = updates_e.items() + updates_g.items() + self.generator.sample_updates,
+                                self.encoder.sparsity_cost, self.z, self.word_embs, gnorm_e, gnorm_g ],
+                updates = updates_e.items() + updates_g.items() #+ self.generator.sample_updates,
             )
 
         
@@ -436,6 +466,7 @@ class Model(object):
         dropout_prob = np.float64(args.dropout).astype(theano.config.floatX)
 
         for epoch_ in xrange(args.max_epochs):
+            #print(" max epochs in train func: ", args.max_epochs)
             epoch = args.trained_max_epochs + epoch_
             unchanged += 1
             if unchanged > 20: return
@@ -447,8 +478,9 @@ class Model(object):
             more = True
             if args.decay_lr:
                 param_bak = [ p.get_value(borrow=False) for p in self.params ]
-
+                
             start_train_generate = time.time()
+            more_counter = 0
             while more:
                 processed = 0
                 train_cost = 0.0
@@ -458,6 +490,7 @@ class Model(object):
                 start_time = time.time()
 
                 N = len(train_batches_x)
+                #print(" begining : ", train_cost )
                 for i in xrange(N):
                     if (i+1) % 100 == 0:
                         say("\r{}/{} {:.2f}       ".format(i+1,N,p1/(i+1)))
@@ -465,9 +498,8 @@ class Model(object):
                     bx, by = train_batches_x[i], train_batches_y[i]
                     mask = bx != padding_id
                     start_train_time = time.time()
-                    cost, loss, sparsity_cost, bz, bp, gl2_e, gl2_g = train_generator(bx, by)
-                    #print (" generation: ", bz, ' \n probs: ', bp)
-                    #exit()
+                    cost, loss, sparsity_cost, bz, emb, gl2_e, gl2_g = train_generator(bx, by)
+                    #print('gl2_g: ' , gl2_g)
 
                     k = len(by)
                     processed += k
@@ -477,7 +509,7 @@ class Model(object):
                     p1 += np.sum(bz*mask) / (np.sum(mask)+1e-8)
 
                 cur_train_avg_cost = train_cost / N
-
+                #print(" end : ", cur_train_avg_cost )
                 say("train generate  time: {} \n".format(time.time() - start_train_generate))
                 if dev:
                     self.dropout.set_value(0.0)
@@ -485,7 +517,7 @@ class Model(object):
                     dev_obj, dev_loss, dev_diff, dev_p1 = self.evaluate_data(
                             dev_batches_x, dev_batches_y, eval_generator, sampling=True)
                     self.dropout.set_value(dropout_prob)
-                    say("dev evaliuate data time: {} \n".format(time.time() - start_dev_time))
+                    say("dev evaluate data time: {} \n".format(time.time() - start_dev_time))
                     cur_dev_avg_cost = dev_obj
 
                 more = False
@@ -500,14 +532,18 @@ class Model(object):
                         say("\nDev cost {} --> {}\n".format(
                                 last_dev_avg_cost, cur_dev_avg_cost
                             ))
-
                 if more:
+                    more_counter += 1
+                    if more_counter<20: more = False
+                if more:
+                    more_counter = 0
                     lr_val = lr_g.get_value()*0.5
                     lr_val = np.float64(lr_val).astype(theano.config.floatX)
                     lr_g.set_value(lr_val)
                     lr_e.set_value(lr_val)
-                    say("Decrease learning rate to {}\n".format(float(lr_val)))
+                    say("Decrease learning rate to {} at epoch {}\n".format(float(lr_val),epoch_+1))
                     for p, v in zip(self.params, param_bak):
+                        #print ('param restoreing: ', p, v)
                         p.set_value(v)
                     continue
 
@@ -533,8 +569,9 @@ class Model(object):
                                 for x in self.generator.params ])+"\n")
                 say("total encode time = {} total geneartor time = {} \n".format(total_encode_time, total_generate_time))
 
-                if epoch_ % args.save_every ==0:
-                            self.save_model(args.save_model+str(epoch_), args)
+                if epoch_ % args.save_every ==0 and epoch_>0:
+                    print 'saving model after epoch -', epoch_+1, ' file name: ', args.save_model, str(epoch_)
+                    self.save_model(args.save_model+str(epoch_), args)
 
                 if dev:
                     if dev_obj < best_dev:
@@ -545,6 +582,7 @@ class Model(object):
                                         get_loss_and_pred, sample_generator)
 
                         if args.save_model:
+                            print 'saving best model after epoch -', epoch_ + 1, ' file name: ', args.save_model
                             self.save_model(args.save_model, args)
 
                     say(("\tsampling devg={:.4f}  mseg={:.4f}  avg_diffg={:.4f}" + 
