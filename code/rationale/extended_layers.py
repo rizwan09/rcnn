@@ -123,7 +123,7 @@ class ZLayer(object):
         assert pz.ndim == 2
         return pz
 
-    def sample(self, x_t, z_tm1, h_tm1):
+    def sample(self, x_t, z_tm1, h_tm1, pz_tm1):
 
         print "z_tm1", z_tm1.ndim, type(z_tm1)
 
@@ -141,15 +141,16 @@ class ZLayer(object):
         xz_t = T.concatenate([x_t, z_t.reshape((-1,1))], axis=1)
         h_t = self.rlayer.forward(xz_t, h_tm1)
 
-        return z_t, h_t
+        return z_t, h_t, pz_t
 
     def sample_all(self, x):
         h0 = T.zeros((x.shape[1], self.n_hidden*(self.rlayer.order+1)), dtype=theano.config.floatX)
         z0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
-        ([ z, h ], updates) = theano.scan(
+        p0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
+        ([ z, h, p ], updates) = theano.scan(
                             fn = self.sample,
                             sequences = [ x ],
-                            outputs_info = [ z0, h0 ]
+                            outputs_info = [ z0, h0, p0 ]
                     )
         assert z.ndim == 2
         return z, updates
@@ -174,7 +175,9 @@ class LZLayer(object):
     def __init__(self, n_in, n_genclassess, activation, seed = None):
         self.n_in, self.n_genclassess, self.activation = \
                 n_in, n_genclassess, activation
-        if seed is not None: self.MRG_rng = MRG_RandomStreams(seed)
+        if seed is not None:
+            #print (' using seed for smapling: ', seed)
+            self.MRG_rng = MRG_RandomStreams(seed)
         else: self.MRG_rng = MRG_RandomStreams()
         self.seed = seed
         self.create_parameters()
@@ -206,6 +209,30 @@ class LZLayer(object):
         z_t = T.cast(T.argmax(pz_t, axis=1), theano.config.floatX)#T.cast(self.MRG_rng.binomial(size=pz_t.shape, p=pz_t), theano.config.floatX)
 
         return z_t, pz_tm2
+    def forward(self, x_t, pz_tm1):
+
+        #print "z_tm1", z_tm1.ndim, type(z_tm1)
+        #print "pz_tm1", pz_tm1.ndim, type(pz_tm1)
+        pz_t = softmax(
+                    T.dot(x_t, self.w_s) +
+                    self.bias_s
+                )
+        # batch
+        pz_t = pz_t[:,1] #only consider probability for 1
+    
+        return pz_t
+
+
+    def forward_all(self, x):
+        #z0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
+        p0 = T.zeros((x.shape[1],), dtype=theano.config.floatX)
+        (p , updates) = theano.scan(
+                            fn = self.forward,
+                            sequences = [ x ],
+                            outputs_info = [ p0 ]
+                    )
+        
+        return  p
 
     def sample(self, x_t, z_tm1, pz_tm1):
 
@@ -250,4 +277,3 @@ class LZLayer(object):
             start = end
         self.w_s.set_value(param_list[-2].get_value())
         self.bias_s.set_value(param_list[-1].get_value())
-
