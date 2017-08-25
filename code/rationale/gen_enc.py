@@ -465,11 +465,13 @@ class Model(object):
         tolerance = 0.10 + 1e-3
         dropout_prob = np.float64(args.dropout).astype(theano.config.floatX)
 
-        for epoch_ in xrange(args.max_epochs):
+        for epoch_ in xrange(args.max_epochs - 50): # -50 when max_epochs  = 100 given
             #print(" max epochs in train func: ", args.max_epochs)
             epoch = args.trained_max_epochs + epoch_
             unchanged += 1
-            if unchanged > 20: return
+            if unchanged > 25: 
+                print 'dev set increases more than 25 times after the best dev found'
+                #return
 
             train_batches_x, train_batches_y = myio.create_batches(
                             train[0], train[1], args.batch, padding_id
@@ -569,8 +571,8 @@ class Model(object):
                                 for x in self.generator.params ])+"\n")
                 say("total encode time = {} total geneartor time = {} \n".format(total_encode_time, total_generate_time))
 
-                if epoch_ % args.save_every ==0 and epoch_>0:
-                    print 'saving model after epoch -', epoch_+1, ' file name: ', args.save_model, str(epoch_)
+                if epoch_ % args.save_every ==0 :#and epoch_>0:
+                    print 'saving model after epoch -', epoch_+1, ' file name: ', args.save_model +  str(epoch_)
                     self.save_model(args.save_model+str(epoch_), args)
 
                 if dev:
