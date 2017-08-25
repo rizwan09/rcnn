@@ -94,6 +94,11 @@ def load_arguments():
             default = 200,
             help = "hidden dimension"
         )
+    argparser.add_argument("--n_genclassess",
+            type = int,
+            default = 2,
+            help = "for selection or not"
+        )
     argparser.add_argument("-d2", "--hidden_dimension2",
             type = int,
             default = 30,
