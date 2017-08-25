@@ -1,7 +1,7 @@
 '''
     This file implements various methods for initializing NN parameters
 
-    @author: Tao Lei (taolei@csail.mit.edu)
+    @author: Md Rizwan Parvez (rizwan.incipient@gmail.com)
 '''
 
 import random
