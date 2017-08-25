@@ -62,7 +62,7 @@ def apply_dropout(x, dropout_prob, v2=False):
     '''
         Apply dropout on x with the specified probability
     '''
-    return Dropout(dropout_prob, v2=v2).forward(x)
+    return Dropout(dropout_prob,  v2=v2).forward(x)
 
 
 class Layer(object):
@@ -132,35 +132,30 @@ class Layer(object):
             return self.activation(
                     T.dot(x, self.W)
                 )
-
-    def predict(self, x, z_tm1):
-        print "z_tm1", z_tm1.ndim, type(z_tm1)
-        #print "prob_tm1", z_tm1.ndim, type(prob_tm1)
-        #print "err_tm1", z_tm1.ndim, type(err_tm1)
-        #print "loss_tm1", z_tm1.ndim, type(loss_tm1)
-
-        if self.has_bias:
-            prob = self.activation(
-                    T.dot(x, self.W) + self.b
+    def forward2(self,x):
+        return  (self.W, self.b
                 )
-        else:
-            prob =  self.activation(
-                    T.dot(x, self.W)
-                )
-        z_t  = T.argmax(prob, axis=1)
-        return z_t
+
+    def predict(self, x, p_tm1):
+        print "p_tm1", p_tm1.ndim, type(p_tm1)
+
+       
+        prob = self.forward(x)
+        
+        return prob
 
     def forward_all(self, x):
-        z0 = T.zeros((x.shape[1],), dtype='int64')
+        p0 = T.zeros((x.shape[1], ), dtype=theano.config.floatX)
 
-        (z , updates) = theano.scan(
+        (p, updates) = theano.scan(
                             fn = self.predict,
                             sequences = [ x ],
-                            outputs_info = [ z0 ]
+                            outputs_info = [  p0 ]
                     )
-        assert z.ndim == 2
-        return z, updates
+        
+        return  p, updates
 
+    
 
 
     @property
@@ -208,6 +203,19 @@ class RecurrentLayer(Layer):
         return activation(
                 T.dot(x, self.W[:n_in]) + T.dot(h, self.W[n_in:]) + self.b
             )
+    def forward2(self, x, h):
+        n_in, n_out, activation = self.n_in, self.n_out, self.activation
+        return x 
+
+    def  forward3(self, x, h):
+        n_in, n_out, activation = self.n_in, self.n_out, self.activation
+        return  h
+
+    def forward4(self, x, h):
+        n_in, n_out, activation = self.n_in, self.n_out, self.activation
+        return T.dot(x, self.W[:n_in])
+        # T.dot(x, self.W[:n_in]) + T.dot(h, self.W[n_in:]) + self.b)
+            
 
     def forward_all(self, x, h0=None):
         if h0 is None:
